@@ -1,0 +1,20 @@
+RNAseq and CLIP Analysis for Dou et al.
+
+
+Analysis contains these parts:
+
+
+(1) RNAseq:
+All Analysis concerning knock-down total RNAseq data, essentially the exon count effect in Figure 5
+
+
+
+(2) Analysis of CLIP:
+
+2.1 subRead_annotation: assign first vs last exons etc to annotations used
+
+2.2 CLIP_gene_scaled_metagene_plots: metagene analysis at the gene level
+
+2.3 CLIP_exon_scaled_metagene_plots: metagene analysis at the exon level
+
+2.4 NCBP3_PARCLIP_STARmap_TC_conversions_metagene: positioning of T to C conversions in NCBP3 PARCLIP dataset

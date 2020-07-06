@@ -1,0 +1,143 @@
+---
+title: 'SubRead Annotations'
+author: "Manfred Schmid"
+output: 
+  pdf_document:
+    toc: true 
+    toc_depth: 3
+    fig_caption: true
+---
+
+`r format(Sys.time(), "%d %B, %Y; %R")`
+
+## Setup
+
+```{r setup, echo=TRUE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8, 
+                      fig.path=paste0('Figures_subReadAnnotations/'), 
+                      dev='pdf', 
+                      echo=TRUE, warning=FALSE, message=FALSE, 
+                      error=TRUE)
+```
+
+```{r load packages, echo=T, warning=F, message=F}
+suppressWarnings(library('tidyverse'))
+suppressWarnings(library('magrittr'))
+suppressWarnings(library('knitr'))
+```
+
+
+# Exons
+
+## load table from subRead
+
+```{r}
+(exon_anno_tbl <- rtracklayer::import('/Volumes/GenomeDK/ms_tools/subread-2.0.0-Linux-x86_64/annotation/hg38_RefSeq_individualexons.bed') %>% data.frame %>% tbl_df %>% tidyr::separate(name, c('GeneID', 'ExonID')))
+```
+
+
+#### add exon nr and counts
+```{r}
+(exon_cnts <- exon_anno_tbl %>% 
+  mutate(GeneID = as.character(GeneID)) %>%
+  group_by(GeneID) %>%
+  summarize(exon_cnt = n(),
+            tr_exons_width = sum(end-start)))
+```
+
+
+```{r}
+(exon_anno_tbl %<>% 
+  group_by(GeneID) %>%
+  mutate(exon_nr = as.integer(ifelse(strand == '+', 
+                                     rank(start, ties.method = 'first'), 
+                                     rank(-start, ties.method = 'first'))),
+         exon_width = end-start) %>%
+  dplyr::select(GeneID, ExonID, exon_nr, width) %>%
+  left_join(., exon_cnts) %>%
+  ungroup %>%
+  mutate(class = case_when(.$exon_cnt == 1 ~ 'monoexonic', 
+                           .$exon_nr == 1 ~ 'multiexonic first exon',
+                           .$exon_nr == .$exon_cnt ~ 'multiexonic last exon',
+                           .$exon_nr < .$exon_cnt  ~ 'multiexonic internal')))
+```
+
+
+## ENTREZ to ENSEMBL
+
+```{r}
+library("AnnotationDbi")
+library("org.Hs.eg.db")
+columns(org.Hs.eg.db)
+```
+
+```{r}
+entrezid_map <- select(org.Hs.eg.db,
+        key=unique(exon_anno_tbl$GeneID), columns=c('ENSEMBL', 'SYMBOL', "REFSEQ"),
+        keytype="ENTREZID")
+
+head(entrezid_map)
+```
+
+
+## Gencode gene info
+
+
+```{r}
+(gencode_tbl <- rtracklayer::import('/Volumes/GenomeDK/annotations/hg38/Gencode_v28/gencode.v28.genes.gtf') %>% data.frame %>% tbl_df %>%
+   dplyr::mutate(ENSEMBL = sub('\\..*', '', gene_id)) %>%
+   dplyr::select(ENSEMBL, gene_name, gene_type))
+```
+
+```{r}
+sort(table(gencode_tbl$gene_type),decreasing = T)
+```
+
+
+## combine subread exons with gencode those
+```{r}
+(exon_anno_tbl %<>%
+  left_join(., dplyr::rename(entrezid_map, GeneID=ENTREZID)) %>%
+   left_join(., gencode_tbl))
+```
+
+```{r}
+sort(table(exon_anno_tbl$gene_type),decreasing = T)
+```
+
+```{r}
+save(exon_anno_tbl, file='../data/subRead_exon_annotations.RData')
+```
+
+
+# Transcripts table
+
+```{r}
+(transcripts <- rtracklayer::import('/Volumes/GenomeDK/ms_tools/subread-2.0.0-Linux-x86_64/annotation/hg38_RefSeq_exon.bed'))
+```
+
+```{r}
+(tr_anno_tbl <- exon_anno_tbl %>%
+  distinct(GeneID, exon_cnt, tr_exons_width, ENSEMBL, SYMBOL, REFSEQ, gene_name, gene_type))
+```
+--> no good fit with RefSeq !?
+
+```{r}
+(tr_anno_tbl <- exon_anno_tbl %>%
+  distinct(GeneID, exon_cnt, tr_exons_width, ENSEMBL, SYMBOL, gene_name, gene_type))
+```
+--> much more reasonable list!
+
+```{r}
+filter(tr_anno_tbl, gene_type == 'protein_coding')
+```
+
+```{r}
+save(tr_anno_tbl, file='../data/subRead_tr_annotations.RData')
+```
+
+
+# sessionInfo
+```{r}
+sessionInfo()
+```

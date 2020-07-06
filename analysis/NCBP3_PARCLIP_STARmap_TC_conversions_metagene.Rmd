@@ -1,0 +1,342 @@
+---
+title: 'NCBP3 TC conversions metagene'
+author: "Manfred Schmid"
+output: 
+  pdf_document:
+    toc: true 
+    toc_depth: 3
+    fig_caption: true
+---
+
+`r format(Sys.time(), "%d %B, %Y; %R")`
+
+## Setup
+
+```{r setup, echo=TRUE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8, 
+                      fig.path=paste0('../Figures/NCBP3_STARmap_TCconversions_metagene/'), 
+                      dev='pdf', 
+                      echo=TRUE, warning=FALSE, message=FALSE, 
+                      error=TRUE)
+```
+
+```{r load packages, echo=T, warning=F, message=F}
+suppressWarnings(library('tidyverse'))
+suppressWarnings(library('magrittr'))
+suppressWarnings(library('knitr'))
+```
+
+```{bash, eval=FALSE}
+#!/bin/sh
+#srun --pty bash
+cd /home/schmidm/faststorage/NCBP3/C17orf85_PARCLIP_Landthaler/scripts/
+conda activate slamdunk
+
+bam="/home/schmidm/faststorage/NCBP3/C17orf85_PARCLIP_Landthaler/data/STAR_map/SRR500480Aligned.sortedByCoord.out_rmdup.bam"
+bam="/home/schmidm/faststorage/NCBP3/C17orf85_PARCLIP_Landthaler/data/STAR_map/SRR500481Aligned.sortedByCoord.out_rmdup.bam"
+
+fasta="/home/schmidm/annotations/hg38/Genome/GRCh38.fa"
+
+
+##do below for both bam files !!
+samtools mpileup -B -A -f $fasta $bam > ${bam/.bam/_mpileup.out}
+
+awk '$3 == "T" && !($5=="." || $5 ==",")' ${bam/.bam/_mpileup.out} | head
+#-->check a few out using IGV; col5 capital 'C' are T>C conversions on plus strand
+awk '$3 == "A" && !($5=="." || $5 ==",")' ${bam/.bam/_mpileup.out} | head
+#-->check a few out using IGV; col5 lowercase 'g' are T>C conversions on minus strand
+
+awk '{
+  if($3 == "T" && ($5 ~ /C/)){
+    split($5, chars, "");
+    for(i=1;i<=length(chars);i++){
+      if(chars[i] == "C"){
+        TCcnt += 1;
+      };
+    }
+    print $1"\t"$2-1"\t"$2"\t"TCcnt;
+    TCcnt = 0;
+  }
+}' ${bam/.bam/_mpileup.out} > ${bam/.bam/_TCs_plus.bedgraph}
+
+awk '{
+  if($3 == "A" && ($5 ~ /g/)){
+    split($5, chars, "");
+    for(i=1;i<=length(chars);i++){
+      if(chars[i] == "g"){
+        TCcnt += 1;
+      };
+    }
+    print $1"\t"$2-1"\t"$2"\t"TCcnt;
+    TCcnt = 0;
+  }
+}' ${bam/.bam/_mpileup.out} > ${bam/.bam/_TCs_minus.bedgraph}
+
+bam="/home/schmidm/faststorage/NCBP3/C17orf85_PARCLIP_Landthaler/data/STAR_map/SRR500480Aligned.sortedByCoord.out_rmdup.bam"
+wc -l ${bam/.bam/_TCs*.bedgraph}
+# 1831 /home/schmidm/faststorage/NCBP3/C17orf85_PARCLIP_Landthaler/data/STAR_map/SRR500480Aligned.sortedByCoord.out_rmdup_TCs_minus.bedgraph
+# 1867 /home/schmidm/faststorage/NCBP3/C17orf85_PARCLIP_Landthaler/data/STAR_map/SRR500480Aligned.sortedByCoord.out_rmdup_TCs_plus.bedgraph
+
+awk '{sum+=$4}END{print sum}' ${bam/.bam/_TCs*.bedgraph}
+#4027
+
+bam="/home/schmidm/faststorage/NCBP3/C17orf85_PARCLIP_Landthaler/data/STAR_map/SRR500481Aligned.sortedByCoord.out_rmdup.bam"
+
+wc -l ${bam/.bam/_TCs*.bedgraph}
+#22308 /home/schmidm/faststorage/NCBP3/C17orf85_PARCLIP_Landthaler/data/STAR_map/SRR500481Aligned.sortedByCoord.out_rmdup_TCs_minus.bedgraph
+#22824 /home/schmidm/faststorage/NCBP3/C17orf85_PARCLIP_Landthaler/data/STAR_map/SRR500481Aligned.sortedByCoord.out_rmdup_TCs_plus.bedgraph
+awk '{sum+=$4}END{print sum}' ${bam/.bam/_TCs*.bedgraph}
+#47527
+
+
+
+
+## intersect with exons
+
+
+#anno="/home/schmidm/ms_tools/subread-2.0.0-Linux-x86_64/annotation/hg38_RefSeq_exon.txt"
+#sed 1d $anno | awk '{if($1==gene_id){i+=1}else{i=1};gene_id=$1;print $2"\t"$3-1"\t"$4"\t"$1":"i"\t0\t"$5}' > /home/schmidm/ms_tools/subread-2.0.0-Linux-x86_64/annotation/hg38_RefSeq_individualexons.bed
+
+exons="/home/schmidm/ms_tools/subread-2.0.0-Linux-x86_64/annotation/hg38_RefSeq_individualexons.bed"
+
+awk '$6=="+"' $exons > ${exons/.bed/_plus.bed}
+awk '$6=="-"' $exons > ${exons/.bed/_minus.bed}
+
+bg="/home/schmidm/faststorage/NCBP3/C17orf85_PARCLIP_Landthaler/data/STAR_map/SRR500481Aligned.sortedByCoord.out_rmdup_TCs_plus.bedgraph"
+
+grep ^chr $bg | sort -k1,1 -k2,2n > tmp.bg
+grep ^chr ${exons/.bed/_plus.bed} | sort -k1,1 -k2,2n -o ${exons/.bed/_plus.bed}
+bedtools intersect -loj -a ${exons/.bed/_plus.bed} -b tmp.bg | \
+awk '$8 != "-1"' > ${bg/.bedgraph/_intersectexons.txt}
+
+wc -l ${bg/.bedgraph/_intersectexons.txt}
+#7573 /home/schmidm/faststorage/NCBP3/C17orf85_PARCLIP_Landthaler/data/STAR_map/SRR500481Aligned.sortedByCoord.out_rmdup_TCs_plus_intersectexons.txt
+
+bg="/home/schmidm/faststorage/NCBP3/C17orf85_PARCLIP_Landthaler/data/STAR_map/SRR500481Aligned.sortedByCoord.out_rmdup_TCs_minus.bedgraph"
+
+grep ^chr $bg | sort -k1,1 -k2,2n > tmp.bg
+grep ^chr ${exons/.bed/_minus.bed} | sort -k1,1 -k2,2n -o ${exons/.bed/_minus.bed}
+bedtools intersect -loj -a ${exons/.bed/_minus.bed} -b tmp.bg | \
+awk '$8 != "-1"' > ${bg/.bedgraph/_intersectexons.txt}
+
+wc -l ${bg/.bedgraph/_intersectexons.txt}
+#7389 /home/schmidm/faststorage/NCBP3/C17orf85_PARCLIP_Landthaler/data/STAR_map/SRR500481Aligned.sortedByCoord.out_rmdup_TCs_minus_intersectexons.txt
+```
+
+
+load to R
+
+```{r}
+TCplus <- read_tsv('/Volumes/GenomeDK/faststorage/NCBP3/C17orf85_PARCLIP_Landthaler/data/STAR_map/SRR500481Aligned.sortedByCoord.out_rmdup_TCs_plus_intersectexons.txt',
+         col_names = c('chr', 'start', 'end', 'name', 'score', 'strand', 'TCchrom', 'TCstart', 'TCend', 'TCcnt'))
+
+TCminus <- read_tsv('/Volumes/GenomeDK/faststorage/NCBP3/C17orf85_PARCLIP_Landthaler/data/STAR_map/SRR500481Aligned.sortedByCoord.out_rmdup_TCs_minus_intersectexons.txt',
+         col_names = c('chr', 'start', 'end', 'name', 'score', 'strand', 'TCchrom', 'TCstart', 'TCend', 'TCcnt'))
+
+(TC <- bind_rows(TCplus, TCminus))
+```
+
+## metagene plots all
+```{r}
+TCrel3ss <- TC %>%
+  mutate(rel_3ss = ifelse(strand == '+', TCend-end, start-TCstart)) %>%
+  group_by(rel_3ss) %>%
+  summarize(cnt=n(),
+            sum = sum(TCcnt))
+```
+
+
+```{r TC conversions rel 3ss}
+TCrel3ss %>%
+  filter(rel_3ss > -300) %>%
+  ggplot(., aes(x=rel_3ss, y=cnt)) +
+  geom_bar(stat='identity') +
+  theme_bw() +
+  theme(panel.grid=element_blank())
+```
+
+```{r TC conversions rel 3ss high res}
+TCrel3ss %>%
+  filter(rel_3ss > -50) %>%
+  ggplot(., aes(x=rel_3ss, y=cnt)) +
+  geom_bar(stat='identity')
+```
+
+
+## metagene plots protein-coding
+
+```{r}
+load('../../data/subRead_exon_annotations.RData', verbose=T)
+exon_anno_tbl
+```
+
+```{r}
+(exon_anno_tbl %<>% 
+  filter(gene_type == 'protein_coding') %>%
+  dplyr::distinct(GeneID, ExonID, exon_nr, width, class))
+```
+
+```{r}
+pc_ids <- unique(exon_anno_tbl$GeneID)
+length(pc_ids)
+```
+
+
+```{r}
+(pcTCrel3ss <- TC %>%
+  tidyr::separate(name, c('GeneID', 'ExonID'), sep=':') %>%
+  filter(GeneID %in% pc_ids) %>%
+  left_join(., exon_anno_tbl) %>%
+  mutate(rel_3ss = ifelse(strand == '+', TCend-end, start-TCstart)))
+```
+
+```{r}
+pcTCrel3ss_meta <- pcTCrel3ss%>%
+  group_by(rel_3ss) %>%
+  summarize(cnt=n(),
+            sum = sum(TCcnt))
+```
+
+
+
+```{r pc TC conversions rel 3ss}
+pcTCrel3ss_meta %>%
+  filter(rel_3ss > -300) %>%
+  ggplot(., aes(x=rel_3ss, y=cnt)) +
+  geom_bar(stat='identity') +
+  theme_bw() +
+  theme(panel.grid=element_blank())
+```
+
+```{r pc TC conversions rel 3ss high res}
+pcTCrel3ss_meta %>%
+  filter(rel_3ss > -50) %>%
+  ggplot(., aes(x=rel_3ss, y=cnt)) +
+  geom_bar(stat='identity') +
+  theme_bw() +
+  theme(panel.grid=element_blank())
+```
+
+## protein-coding per exon class
+
+```{r}
+pcTCrel3ss_meta_per_class <- pcTCrel3ss%>%
+  group_by(rel_3ss, class) %>%
+  summarize(cnt=n(),
+            sum = sum(TCcnt))
+```
+
+```{r pc per class TC conversions rel 3ss}
+pcTCrel3ss_meta_per_class %>%
+  filter(rel_3ss > -300) %>%
+  ggplot(., aes(x=rel_3ss, y=cnt, fill=class)) +
+  geom_bar(stat='identity') +
+  facet_grid(class~., scales = 'free') +
+  theme_bw() +
+  theme(panel.grid=element_blank())
+```
+
+```{r pc per class TC conversions rel 3ss high res}
+pcTCrel3ss_meta_per_class %>%
+  filter(rel_3ss > -50) %>%
+  ggplot(., aes(x=rel_3ss, y=cnt, fill=class)) +
+  geom_bar(stat='identity') +
+  facet_grid(class~., scales = 'free') +
+  theme_bw() +
+  theme(panel.grid=element_blank())
+```
+
+
+## pc all first and internal exons
+
+```{r}
+internal_pcTCrel3ss <- pcTCrel3ss %>%
+  dplyr::filter(class == 'multiexonic first exon' | class == 'multiexonic internal') %>%
+  group_by(rel_3ss) %>%
+  summarize(cnt=n(),
+            sum = sum(TCcnt))
+```
+
+```{r internal pc TC conversions rel 3ss}
+internal_pcTCrel3ss %>%
+  filter(rel_3ss > -300) %>%
+  ggplot(., aes(x=rel_3ss, y=cnt)) +
+  geom_bar(stat='identity') +
+  theme_bw() +
+  theme(panel.grid=element_blank())
+```
+
+```{r internal pc TC conversions rel 3ss high res}
+internal_pcTCrel3ss %>%
+  filter(rel_3ss > -50) %>%
+  ggplot(., aes(x=rel_3ss, y=cnt)) +
+  geom_bar(stat='identity') +
+  theme_bw() +
+  theme(panel.grid=element_blank())
+```
+
+## pc all internal exons greater 200bp
+
+--> these are used in the paper.
+
+```{r}
+g200_internal_pcTCrel3ss <- pcTCrel3ss %>%
+  dplyr::filter(width > 200, class == 'multiexonic first exon' | class == 'multiexonic internal') %>%
+  group_by(rel_3ss) %>%
+  summarize(cnt=n(),
+            sum = sum(TCcnt))
+```
+
+```{r internal pc g200 TC conversions rel 3ss}
+g200_internal_pcTCrel3ss %>%
+  filter(rel_3ss > -300) %>%
+  ggplot(., aes(x=rel_3ss, y=cnt)) +
+  geom_bar(stat='identity') +
+  theme_bw() +
+  theme(panel.grid=element_blank())
+```
+
+
+```{r internal pc g200 TC conversions rel 3ss high res}
+g200_internal_pcTCrel3ss %>%
+  filter(rel_3ss > -50) %>%
+  ggplot(., aes(x=rel_3ss, y=cnt)) +
+  geom_bar(stat='identity')+
+  theme_bw() +
+  theme(panel.grid=element_blank())
+```
+
+## pc all internal exons greater 200bp per class
+
+--> these are used in the paper.
+
+```{r}
+g200_internal_pcTCrel3ss_perclass <- pcTCrel3ss %>%
+  dplyr::filter(width > 200) %>%
+  group_by(rel_3ss, class) %>%
+  summarize(cnt=n(),
+            sum = sum(TCcnt))
+```
+
+```{r pc g200 per class TC conversions rel 3ss}
+g200_internal_pcTCrel3ss_perclass %>%
+  filter(rel_3ss > -300) %>%
+  ggplot(., aes(x=rel_3ss, y=cnt, fill=class)) +
+  geom_bar(stat='identity') +
+  facet_grid(class~., scales = 'free')+
+  theme_bw() +
+  theme(panel.grid=element_blank())
+```
+
+```{r pc g200 per class TC conversions rel 3ss high res}
+g200_internal_pcTCrel3ss_perclass %>%
+  filter(rel_3ss > -50) %>%
+  ggplot(., aes(x=rel_3ss, y=cnt, fill=class)) +
+  geom_bar(stat='identity') +
+  facet_grid(class~., scales = 'free')+
+  theme_bw() +
+  theme(panel.grid=element_blank())
+```
+```{r}
+sessionInfo()
+```

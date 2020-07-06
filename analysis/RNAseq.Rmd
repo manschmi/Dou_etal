@@ -1,0 +1,798 @@
+---
+title: "RNAseq Data Differential Expression"
+author: "Manfred Schmid"
+output: pdf_document
+---
+`r format(Sys.time(), "%d %B, %Y")`
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8, fig.path='../Figures/RNAseq/', dev='pdf', 
+                      echo=TRUE, warning=FALSE, message=FALSE, error=TRUE)
+```
+
+```{r load packages, echo=T, warning=F, message=F}
+suppressWarnings(library("tidyverse"))
+suppressWarnings(library("knitr"))
+suppressWarnings(library("magrittr"))
+suppressWarnings(library("broom"))
+suppressWarnings(library("DESeq2"))
+suppressWarnings(library("limma"))
+suppressWarnings(library("RColorBrewer"))
+
+```
+
+
+# Mapping
+
+RNA extraction and RNA-seq library preparation upon GFP and NCBP3 depletion were performed as described (Iasillo et al., 2017). Total RNAseq of siNCBP3 depletion samples are first reported here, but were collected as part of same experiment described in (Iasillo et al., 2017 and Winczura et al., 2018) and deposited at GEO:GSE99059. Reads from siNCBP3,control siEGFP and relevant depletions from GEO:GSE99059 were processed in parallel as described in (Silla et al., under revision). In brief, raw reads were quality filtered and trimmed as described (Meola et al., 2016), using Trimmomatic (v 0.32) and settings (PE ILLUMINACLIP:/com/extra/Trimmomatic/0.32/adapters/TruSeq3-PE-2.fa:2:30:10 HEADCROP:12 LEADING:22 SLIDINGWINDOW:4:22 MINLEN:25). Cleaned reads were then mapped to GRCh38 with HISAT2 (v 2.1.0) (Kim et al., 2015) using default settings and the genome index 'H. sapiens, UCSC hg38 and Refseq gene annotations’ provided at the HISAT2 download page (ftp://ftp.ccb.jhu.edu/pub/infphilo/hisat2/data/hg38_tran.tar.gz). Only proper pairs with both reads mapping to the genome were used for further analysis. 
+
+
+#### Trimming
+
+```{bash, eval=FALSE}
+#!/bin/sh
+#call:
+## cd faststorage/ClaudiaI/scripts/RNAseq_hg38/
+## for f in /home/schmidm/faststorage/ClaudiaI/RNAseq_fastq/RNASeq_HK_may2016_fastq/clean_reads/Ars2*/*_1.fq.gz; do sbatch trim.sh $f; done
+## for f in /home/schmidm/faststorage/ClaudiaI/RNAseq_fastq/RNASeq_HK_may2016_fastq/clean_reads/eGFP*/*_1.fq.gz; do sbatch trim.sh $f; done
+## for f in /home/schmidm/faststorage/ClaudiaI/RNAseq_fastq/RNASeq_HK_may2016_fastq/clean_reads/NCBP3*/*_1.fq.gz; do sbatch trim.sh $f; done
+## for f in /home/schmidm/faststorage/ClaudiaI/RNAseq_fastq/RNASeq_HK_may2016_fastq/clean_reads/Cbp80*/*_1.fq.gz; do sbatch trim.sh $f; done
+## for f in /home/schmidm/faststorage/ClaudiaI/RNAseq_fastq/RNASeq_HK_may2016_fastq/clean_reads/Z18*/*_1.fq.gz; do sbatch trim.sh $f; done
+## for f in /home/schmidm/faststorage/ClaudiaI/RNAseq_fastq/RNASeq_HK_may2016_fastq/clean_reads/Cbp20*/*_1.fq.gz; do sbatch trim.sh $f; done
+## for f in /home/schmidm/faststorage/ClaudiaI/RNAseq_fastq/RNASeq_BrU_HK_fastq/clean_reads/*/*_1.fq.gz; do sbatch trim.sh $f; done
+
+
+source /com/extra/Trimmomatic/0.32/load.sh
+
+fastq1=$1
+echo $fastq1
+
+fastq2=${fastq1/_1.fq.gz/_2.fq.gz}
+fastq_out1=${fastq1/_1.fq.gz/_1P.fq.gz}
+fastq_out2=${fastq1/_1.fq.gz/_1U.fq.gz}
+fastq_out3=${fastq1/_1.fq.gz/_2P.fq.gz}
+fastq_out4=${fastq1/_1.fq.gz/_2U.fq.gz}
+
+java -jar /com/extra/Trimmomatic/0.32/trimmomatic-0.32.jar PE ${fastq1} ${fastq2} ${fastq_out1} ${fastq_out2} ${fastq_out3} ${fastq_out4} ILLUMINACLIP:/com/extra/Trimmomatic/0.32/adapters/TruSeq3-PE-2.fa:2:30:10 HEADCROP:12 LEADING:22 SLIDINGWINDOW:4:22 MINLEN:25
+
+echo "done"
+```
+
+
+#### Mapping
+
+```{bash, eval=FALSE}
+#!/bin/sh
+##hisat2 to hg38 mapping!
+
+# cd faststorage/ClaudiaI/scripts/RNAseq_hg38/
+# for f in /home/schmidm/faststorage/ClaudiaI/RNAseq_fastq/RNASeq_HK_may2016_fastq/clean_reads/eGFP*/*_1P.fq.gz; do sbatch --mem=16g -c 8 --time=720 map_hg38.sh $f; done
+# for f in /home/schmidm/faststorage/ClaudiaI/RNAseq_fastq/RNASeq_HK_may2016_fastq/clean_reads/NCBP3*/*_1P.fq.gz; do sbatch --mem=16g -c 8 --time=720 map_hg38.sh $f; done
+# for f in /home/schmidm/faststorage/ClaudiaI/RNAseq_fastq/RNASeq_HK_may2016_fastq/clean_reads/Ars2*/*_1P.fq.gz; do sbatch --mem=16g -c 8 --time=720 map_hg38.sh $f; done
+# for f in /home/schmidm/faststorage/ClaudiaI/RNAseq_fastq/RNASeq_HK_may2016_fastq/clean_reads/Cbp80*/*_1P.fq.gz; do sbatch --mem=16g -c 8 --time=720 map_hg38.sh $f; done
+# for f in /home/schmidm/faststorage/ClaudiaI/RNAseq_fastq/RNASeq_HK_may2016_fastq/clean_reads/Z18*/*_1P.fq.gz; do sbatch --mem=16g -c 8 --time=720 map_hg38.sh $f; done
+# for f in /home/schmidm/faststorage/ClaudiaI/RNAseq_fastq/RNASeq_HK_may2016_fastq/clean_reads/Cbp20*/*_1P.fq.gz; do sbatch --mem=16g -c 8 --time=720 map_hg38.sh $f; done
+# for f in /home/schmidm/faststorage/ClaudiaI/RNAseq_fastq/RNASeq_BrU_HK_fastq/clean_reads/*/*_1P.fq.gz; do sbatch --mem=16g -c 8 --time=720 map_hg38.sh $f; done
+
+
+. /home/schmidm/miniconda2/etc/profile.d/conda.sh
+conda activate hisat2
+
+set -x
+fastq1=$1
+fastq2=${fastq1//_1P.fq.gz/_2P.fq.gz}
+name=$(echo $fastq1 | sed s/.*clean_reads\\///g | sed s/-/_/g | sed s/_rep.*//g | sed s/tot/tot_/g)
+
+index="/home/schmidm/annotations/hg38/HISAT2_index/hg38_tran/genome_tran"
+
+
+sam="/home/schmidm/faststorage/ClaudiaI/RNAseq_bams_hg38/${name}.sam"
+
+echo "for ${name}"
+echo " mapping mate1 $fastq1"
+echo " mapping mate2 $fastq2"
+echo " into $sam"
+hisat2 -p 8 -x $index -1 $fastq1 -2 $fastq2 -S $sam
+
+bam=${sam/.sam/_unique_properlypaired.bam}
+
+source /com/extra/samtools/1.6.0/load.sh
+
+echo "sorting and filtering $sam into $bam"
+## -f 2 selest only reads in proper pairs
+## -F 780 deselect reads unmapped (0x4), read with mate unmapped (0x8), not primary alignment (0x100) and read fails platform/vendor quality checks (0x200)
+## -u uncompressed output
+## -S input is sam file
+samtools view -S -u -f 2 -F 780 ${sam} | samtools sort -m 14G -T "/scratch/${SLURM_JOBID}/tmp" -o ${bam} -
+
+echo " indexing"
+samtools index ${bam}
+
+echo "DONE"
+```
+
+
+## Gene counts from bam files
+
+```{bash, eval=FALSE}
+#!/bin/sh
+##featureCounts to hg38 mapping!
+
+libs="tot"
+/home/schmidm/ms_tools/subread-2.0.0-Linux-x86_64/bin/featureCounts -p -C -s 2 -F SAF -a /home/schmidm/ms_tools/subread-2.0.0-Linux-x86_64/annotation/hg38_RefSeq_exon.txt -t exon -o /home/schmidm/faststorage/ClaudiaI/RNAseq_bams_hg38/featureCounts_builtin/${libs}_s2_counts.txt /home/schmidm/faststorage/ClaudiaI/RNAseq_bams_hg38/*${libs}*_unique_properlypaired.bam
+echo "DONE"
+```
+
+
+
+
+# load count data
+
+
+## load exon counts to R
+```{r}
+read_count_file <- function(fname) {
+  df <- read_tsv(fname, comment = '#') %>%
+    dplyr::select(Geneid, contains('.bam')) %>%
+    mutate(Geneid = as.character(Geneid))
+  
+  colnames(df) <- sub('.*\\/', '', colnames(df)) %>% sub('_unique.*', '', .)
+  
+  df %>%
+    gather(lib, cnt, -Geneid)
+}
+```
+
+
+```{r}
+(exon_counts <- read_count_file('/Volumes/GenomeDK/faststorage/ClaudiaI/RNAseq_bams_hg38/featureCounts_builtin/tot_s2_counts.txt'))
+```
+
+
+
+
+# Prepare counts and sample info for DESeq2
+
+```{r}
+cnt_mat <- exon_counts %>%
+  spread(lib, cnt) %>%
+  data.frame %>%
+  column_to_rownames('Geneid')
+
+head(cnt_mat)
+```
+
+```{r}
+coldata <- data.frame(condition = colnames(cnt_mat)) %>%
+  tidyr::separate(condition, c('siRNA', 'fraction', 'replicate'), by='_', remove=FALSE) %>%
+  column_to_rownames('condition')
+
+kable(coldata)
+```
+
+--> several of these libraries are not used actively here, but they are all samples from this very same batch of experiment. All are included at this step assuming that the more samples yield more accurate dispersion estimation.
+
+```{r}
+ddsFullCountTable <- DESeqDataSetFromMatrix(countData = cnt_mat,
+                                            colData = coldata,
+                                            design = ~ siRNA)
+
+dds <- DESeq(ddsFullCountTable)
+```
+
+```{r}
+save(dds, file = '../data/DESeq2_hg38.RData')
+```
+
+
+alternative starting point:
+```{r}
+load('../data/DESeq2_hg38.RData', verbose=T)
+dds
+```
+
+
+#### size factors exons
+
+```{r barplot sf exons}
+ggplot(data.frame(colData(dds)), aes(x=replicate,y=sizeFactor)) + geom_bar(stat='identity') + facet_grid(.~siRNA)
+```
+
+Some variation but no extreme outliers.
+
+```{r}
+sfs <- sizeFactors(dds)
+save(sfs, file = '../data/DESeq2_hg38_sizeFactors.RData')
+```
+
+
+
+# PCA of count data
+
+Follow standard DESeq2 vignette-based pipeline. Using vst for variance-stabilization before clustering.
+```{r}
+vst <- vst( dds )
+head( assay(vst) )
+```
+
+```{r scatterplots vst effect}
+par(mfrow=c(2,1))
+plot( log2( 1+counts(dds, normalized=TRUE)[, 1:2] ), col="#00000020", pch=20, cex=0.3, main='raw log2 counts' )
+plot( assay(vst)[, 1:2], col="#00000020", pch=20, cex=0.3, main='after vst')
+par(mfrow=c(1,1))
+```
+
+
+```{r PCA vst}
+pca <- plotPCA(vst, intgroup = c('siRNA', 'replicate'), returnData = TRUE) 
+
+ggplot(pca, (aes(x=PC1, y=PC2, color=siRNA, shape=replicate))) +
+  geom_point(size=6) +
+  xlab(paste0("PC1: ", round(attr(pca, 'percentVar')[1] * 
+                               100), "% variance")) + 
+  ylab(paste0("PC2: ", round(attr(pca, 'percentVar')[2] * 
+                               100), "% variance")) +
+  scale_color_brewer(palette = 'Set1') +
+  theme_bw() +
+  theme(panel.grid=element_blank())
+```
+
+--> Cbp20 has minor phenotype, possibly due to bad RNAi efficiency but this was not followed up. Cbp20 data is not used for any conclusions. The other KDs show distinct phenotypes as expected.
+
+
+# Differential expression
+
+contrasts to use (all relative to egfp of course)
+```{r}
+(sirnas <- unique(colData(dds)$siRNA) %>% 
+   keep(!grepl('eGFP', .)) %>%
+   as.character)
+
+contrasts <- lapply(sirnas, function(sirna) c('siRNA', sirna, 'eGFP'))
+names(contrasts) <- sirnas
+```
+
+
+```{r}
+RNAseq_DESeq2_results <- lapply(contrasts, function(contr) results(dds, 
+                                                                   contrast=contr,
+                                                                   tidy = TRUE))
+```
+
+```{r}
+(deseq_res <- lapply(seq_along(RNAseq_DESeq2_results), function(i) data.frame(RNAseq_DESeq2_results[[i]]) %>%
+                       as_tibble %>%
+                       mutate(comparison = names(contrasts)[i])) %>%
+   bind_rows %>%
+   mutate(sig = case_when(.$padj < .1 & .$log2FoldChange > 0 ~ 'sig up',
+                          .$padj < .1 & .$log2FoldChange < 0 ~ 'sig dn', 
+                          TRUE ~ 'not sig')))
+```
+
+
+```{r}
+save(deseq_res, file='../data/DESeq2_hg38_res_all_Rel_EGFP.RData')
+```
+
+
+```{r}
+load('../data/DESeq2_hg38_res_all_Rel_EGFP.RData', verbose=T)
+
+head(deseq_res)
+```
+
+
+#### MA plots
+```{r MAplots all}
+ggplot(deseq_res, aes(x=log10(baseMean), y=log2FoldChange, color=sig, size=sig)) +
+  geom_point(alpha=.4, shape=16) +
+  scale_color_manual(values=c('gray', 'red', 'blue'), na.value='gray') +
+  scale_size_manual(values=c(.25, 1, 1), na.value=.25) +
+  geom_hline(yintercept = 0, linetype=2) +
+  facet_wrap(~comparison, scales='free') +
+  theme_bw() +
+  theme(panel.grid=element_blank())
+```
+
+--> the subplot for NCBP3 is included in the paper.
+
+
+#### total sig up and down numbers per KD
+
+```{r}
+deseq_res %>%
+  group_by(sig, comparison) %>%
+  summarize(cnt = n()) %>%
+  spread(sig, cnt)
+```
+
+
+# Add gene annotations
+
+```{r}
+library("AnnotationDbi")
+library("org.Hs.eg.db")
+columns(org.Hs.eg.db)
+```
+
+```{r}
+entrezid_map <- select(org.Hs.eg.db,
+                       key=unique(deseq_res$row), columns=c('ENSEMBL', 'SYMBOL'),
+                       keytype="ENTREZID")
+
+head(entrezid_map)
+```
+
+
+#### add detailed annotation info
+
+this is based on ENSEMBL IDs, which can be used to obtain detailed info for each gene
+```{r}
+suppressWarnings(library('AnnotationHub'))
+
+hub <- AnnotationHub()
+hub <- subset(hub, hub$genome=='GRCh38') 
+hub <- subset(hub, hub$title=='Homo_sapiens.GRCh38.92.gtf')
+
+hub_name <- names(hub)
+gr <- hub[[hub_name[1]]]
+head(gr)
+```
+
+
+```{r}
+(gene_info <- data.frame(gr[gr$type == 'gene']) %>% 
+   tbl_df %>%
+   dplyr::select(gene_id, gene_biotype, gene_name))
+```
+
+
+combine all the info to the DESeq2 results
+
+```{r}
+(deseq_res %<>%
+   dplyr::rename(ENTREZID = row) %>%
+   left_join(., entrezid_map) %>%
+   dplyr::rename(gene_id = ENSEMBL) %>% 
+   left_join(., gene_info))
+```
+
+
+#### Inspect a few examples of diff expressed genes
+
+downregulated in siNCBP3:
+```{r}
+filter(deseq_res, padj < .1, baseMean > 100) %>%
+  filter(comparison == 'NCBP3') %>%
+  arrange(log2FoldChange) %>%
+  dplyr::select(comparison, gene_id, gene_name, baseMean, log2FoldChange, padj)
+head
+```
+
+upregulated in siNCBP3:
+```{r}
+filter(deseq_res, padj < .1, baseMean > 100) %>%
+  filter(comparison == 'NCBP3') %>%
+  arrange(-log2FoldChange) %>%
+  dplyr::select(comparison, gene_id, gene_name, baseMean, log2FoldChange, padj)
+head
+```
+
+
+
+#### total number of sig genes per gene biotype
+
+```{r}
+deseq_res %>%
+  group_by(comparison, sig, gene_biotype) %>%
+  summarize(cnt=n()) %>%
+  spread(comparison, cnt) %>%
+  filter(sig == 'sig up') %>%
+  arrange(-NCBP3) %>%
+  kable
+```
+
+```{r}
+deseq_res %>%
+  group_by(comparison, sig, gene_biotype) %>%
+  summarize(cnt=n()) %>%
+  spread(comparison, cnt) %>%
+  filter(sig == 'sig dn') %>%
+  arrange(-NCBP3) %>%
+  kable
+```
+
+
+#### save final table
+```{r}
+save(deseq_res, file='../data/DESeq2_hg38_all_annotated_results.RData')
+```
+
+
+# Exon nr analysis
+
+#### Add exon count information
+
+ie from table used by featureCounts
+
+```{r}
+(exons <- read_tsv('/Volumes/GenomeDK/ms_tools/subread-2.0.0-Linux-x86_64/annotation/hg38_RefSeq_exon.txt'))
+```
+
+```{r}
+(exons %<>% 
+   dplyr::mutate(ENTREZID = as.character(GeneID)) %>%
+   mutate(width = End-Start) %>%
+   group_by(ENTREZID) %>%
+   summarize(exon_cnt = n(),
+             exons_width = sum(width)))
+```
+
+
+```{r}
+deseq_res %<>%
+  left_join(., exons)
+```
+
+
+#### exon cnt in sig up vs sig dn
+```{r}
+deseq_res %>%
+  filter(sig == 'sig up' | sig == 'sig dn') %>%
+  group_by(comparison) %>%
+  do(tidy(wilcox.test(.$exon_cnt~.$sig)))
+```
+
+mostly significant, but what direction
+```{r}
+deseq_res %>%
+  filter(sig == 'sig up' | sig == 'sig dn') %>%
+  group_by(comparison) %>%
+  do(tidy(wilcox.test(.$exon_cnt~.$sig, alternative = 'greater')))
+```
+
+--> all except Z18 go in the same direction
+
+
+#### MA plot vs exon cnt
+```{r MA plot colored by exon cnt}
+deseq_res %>%
+  filter(sig != 'not sig') %>%
+  mutate(exon_cnt_class = case_when(.$exon_cnt < 10 ~ '<10',
+                                    TRUE ~ '>=10')) %>%
+  ggplot(., aes(x=log10(baseMean), y=log2FoldChange, color=factor(exon_cnt_class))) +
+  geom_point(alpha=.5, size=.3, shape=16) +
+  scale_color_brewer(palette='Set1') +
+  facet_wrap(~comparison) +
+  theme_bw() +
+  theme(panel.grid=element_blank())
+```
+this is OK, but not super-illustrative.
+
+
+#### Cumulative sum plot
+
+```{r exon counts cumsumplot}
+deseq_res %>%
+  ungroup %>%
+  filter(sig != 'not sig') %>%
+  mutate(exon_cnt = ifelse(exon_cnt > 50, 50, exon_cnt)) %>%
+  group_by(comparison, sig, exon_cnt) %>%
+  summarize(cnt=n()) %>%
+  group_by(comparison, sig) %>%
+  mutate(cumsum_exoncnt = cumsum(cnt),
+         cumsum_freq = cumsum_exoncnt/max(cumsum_exoncnt)) %>%
+  ggplot(., aes(x=exon_cnt, y=cumsum_exoncnt, color=sig)) +
+  geom_line() +
+  facet_wrap(~comparison, scales='free') +
+  scale_color_manual(values=c('red', 'blue')) +
+  theme_bw() +
+  theme(panel.grid=element_blank())
+```
+in siNCBP3 lower exon cnt sig dn depleted but generally more, bit confusing.
+some of the other have strong bias towards either being mostly downregulated in this analysis.
+
+
+#### Cumulative frequency plot
+
+Better representation of exon cnt influence as frequencies and not raw counts
+```{r exon counts cumfreqplot}
+deseq_res %>%
+  ungroup %>%
+  filter(sig != 'not sig') %>%
+  mutate(exon_cnt = ifelse(exon_cnt > 50, 50, exon_cnt)) %>%
+  group_by(comparison, sig, exon_cnt) %>%
+  summarize(cnt=n()) %>%
+  group_by(comparison, sig) %>%
+  mutate(cumsum_exoncnt = cumsum(cnt),
+         cumfreq_exoncnt = cumsum_exoncnt/max(cumsum_exoncnt)) %>%
+  ggplot(., aes(x=exon_cnt, y=cumfreq_exoncnt, color=sig)) +
+  geom_line() +
+  facet_wrap(~comparison) +
+  scale_color_manual(values=c('red', 'blue')) +
+  theme_bw() +
+  theme(panel.grid=element_blank())
+```
+
+
+#### protein-coding subset
+
+Protein coding genes are most relevant in this analysis, focus on those:
+```{r exon counts cumfreqplot pc only}
+deseq_res %>%
+  ungroup %>%
+  filter(gene_biotype == 'protein_coding', 
+         sig != 'not sig') %>%
+  mutate(exon_cnt = ifelse(exon_cnt > 50, 50, exon_cnt)) %>%
+  group_by(comparison, sig, exon_cnt) %>%
+  summarize(cnt=n()) %>%
+  group_by(comparison, sig) %>%
+  mutate(cumsum_exoncnt = cumsum(cnt),
+         cumfreq_exoncnt = cumsum_exoncnt/max(cumsum_exoncnt)) %>%
+  ggplot(., aes(x=exon_cnt, y=cumfreq_exoncnt, color=sig)) +
+  geom_line() +
+  facet_wrap(~comparison) +
+  scale_color_manual(values=c('red', 'blue')) +
+  theme_bw() +
+  theme(panel.grid=element_blank())
+```
+
+statistics for protein-coding genes
+```{r}
+deseq_res %>%
+  ungroup %>%
+  filter(gene_biotype == 'protein_coding', 
+         sig != 'not sig') %>%
+  group_by(comparison) %>%
+  do(tidy(wilcox.test(.$exon_cnt~.$sig)))
+```
+
+
+#### expression bias
+
+estimate expression as baseMean per kb of exon. baseMean is a (moderated?) average read pair count in KD and control.
+```{r}
+deseq_res %<>% 
+  mutate(baseMean_perkb = 1000*baseMean/exons_width)
+```
+
+
+very few genes with a specific number of exons for exon cnt > 15ish, use a cutoff of combining all genes with >=20 exons.
+```{r boxplots baseMeanperkb vs exon_cnt_class}
+deseq_res %>%
+  mutate(exon_cnt_class = case_when(.$exon_cnt > 20 ~ 20, 
+                                    #.$exon_cnt > 15 ~ 15,
+                                    TRUE ~ as.numeric(.$exon_cnt))) %>%
+  ggplot(., aes(x=as.factor(exon_cnt_class), y=log10(baseMean_perkb+1))) +
+  geom_boxplot(outlier.shape=NA) +
+  facet_wrap(~comparison) +
+  theme_bw() +
+  theme(panel.grid=element_blank())
+```
+
+same for protein-coding genes only
+```{r boxplots baseMeanperkb vs exon_cnt_class only protein_coding}
+deseq_res %>%
+  filter(gene_biotype == 'protein_coding') %>%
+  mutate(exon_cnt_class = case_when(.$exon_cnt > 20 ~ 20, 
+                                    #.$exon_cnt > 15 ~ 15,
+                                    TRUE ~ as.numeric(.$exon_cnt))) %>%
+  ggplot(., aes(x=as.factor(exon_cnt_class), y=log10(baseMean_perkb+1))) +
+  geom_boxplot(outlier.shape=NA) +
+  facet_wrap(~comparison) +
+  theme_bw() +
+  theme(panel.grid=element_blank())
+```
+
+
+
+# Expr-matched exon cnt analysis
+
+Seems like bias in expression could explain some of the results above. Use expression-matched subset of differentially expressed genes and repeat the relevant parts.
+
+custom function for expression-matching. Rationale is based on splitting the KD with the smallest number of genes into n (here 20) expression quantiles and for the other KDs of genes select for each quantile the same number of genes fitting this expression quantile. Finally combine the quantiles for each KD.
+```{r}
+match_quantiles <- function(list_of_values, n_quantiles=20) {
+  set.seed(0)
+  
+  set_lengths <- sapply(list_of_values, length)
+  min_set <- which(set_lengths == min(set_lengths))[1]
+  qs <- quantile(list_of_values[[min_set]], probs = seq(0,1,1/n_quantiles))
+  
+  matched <- lapply(1:(length(qs)-1), function(x) {
+    q_sets <- lapply(list_of_values, function(values) which(values > qs[x] & values <= qs[x+1]))
+    min_qsize <- min(sapply(q_sets, length))
+    q_sets <- lapply(q_sets, function(q_set) sample(q_set, min_qsize))
+    q_sets
+  })
+  
+  res <- lapply(seq_along(list_of_values), function(i) unlist(sapply(matched, function(x) x[[i]])))
+  
+  return( res )
+}
+```
+
+
+```{r}
+sigup_NCBP3 <- deseq_res %>%
+  filter(comparison == 'NCBP3', sig == 'sig up')
+sigdn_NCBP3 <- deseq_res %>%
+  filter(comparison == 'NCBP3', sig == 'sig dn')
+
+
+sigs_value_list <- list(sigup_NCBP3$baseMean_perkb, sigdn_NCBP3$baseMean_perkb)
+
+sig_matched <- match_quantiles(sigs_value_list)
+
+exprmatched_res_tbl <- bind_rows(sigup_NCBP3[sig_matched[[1]],], sigdn_NCBP3[sig_matched[[2]],])
+```
+
+
+#### Expression sig up vs down genes before expression-matching
+
+```{r boxplot expression of original results groups}
+deseq_res %>%
+  filter(sig != 'not sig') %>%
+  ggplot(., aes(x=sig, y=log10(baseMean_perkb+1), fill=sig)) +
+  geom_boxplot() +
+  facet_wrap(~comparison) +
+  scale_fill_manual(values = c('red', 'blue')) +
+  theme_bw() +
+  theme(panel.grid=element_blank())
+```
+
+are the differences significant?
+```{r}
+deseq_res %>%
+  filter(sig != 'not sig') %>%
+  group_by(comparison) %>%
+  do(tidy(wilcox.test(.$baseMean_perkb~.$sig)))
+```
+
+
+#### Expression sig up vs down genes after expression-matching
+```{r boxplot expression of expression matched groups}
+exprmatched_res_tbl %>%
+  ungroup %>%
+  mutate(exon_cnt_class = case_when(.$exon_cnt > 20 ~ 20, 
+                                    .$exon_cnt > 15 ~ 15,
+                                    TRUE ~ as.numeric(.$exon_cnt))) %>%
+  ggplot(., aes(x=sig, y=log10(baseMean_perkb+1), fill=sig)) +
+  geom_boxplot() +
+  facet_wrap(~comparison) +
+  scale_fill_manual(values = c('red', 'blue')) +
+  theme_bw() +
+  theme(panel.grid=element_blank())
+```
+
+should have no differences significant
+```{r}
+exprmatched_res_tbl %>%
+  filter(sig != 'not sig') %>%
+  group_by(comparison) %>%
+  do(tidy(wilcox.test(.$baseMean_perkb~.$sig)))
+```
+
+how many genes are matched up?
+```{r}
+exprmatched_res_tbl %>%
+  group_by(comparison, sig) %>%
+  summarize(cnt=n())
+```
+
+
+```{r expression matched counts cumsumplot}
+exprmatched_res_tbl %>%
+  ungroup %>%
+  mutate(exon_cnt = ifelse(exon_cnt > 50, 50, exon_cnt)) %>%
+  group_by(comparison, sig, exon_cnt) %>%
+  summarize(cnt=n()) %>%
+  group_by(comparison, sig) %>%
+  mutate(cumsum_exoncnt = cumsum(cnt),
+         cumsum_freq = cumsum_exoncnt/max(cumsum_exoncnt)) %>%
+  ggplot(., aes(x=exon_cnt, y=cumsum_freq, color=sig)) +
+  geom_line() +
+  facet_grid(comparison~., scales='free') +
+  scale_color_manual(values = c('red', 'blue')) +
+  theme_bw() +
+  theme(panel.grid=element_blank())
+```
+
+
+wilcox test for the difference
+```{r}
+exprmatched_res_tbl %>%
+  group_by(comparison) %>%
+  do(tidy(wilcox.test(.$exon_cnt[.$sig == 'sig up'], .$exon_cnt[.$sig == 'sig dn'])))
+```
+Note that the exact p-value varies for each expression-matched depends on the random generator seed.
+
+
+#### expr matched protein-coding genes
+
+```{r}
+sigup_NCBP3 <- deseq_res %>%
+  filter(gene_biotype == 'protein_coding', comparison == 'NCBP3', sig == 'sig up')
+sigdn_NCBP3 <- deseq_res %>%
+  filter(gene_biotype == 'protein_coding', comparison == 'NCBP3', sig == 'sig dn')
+
+
+sigs_value_list <- list(sigup_NCBP3$baseMean_perkb, sigdn_NCBP3$baseMean_perkb)
+
+sig_matched <- match_quantiles(sigs_value_list)
+
+exprmatched_res_tbl <- bind_rows(sigup_NCBP3[sig_matched[[1]],], sigdn_NCBP3[sig_matched[[2]],])
+```
+
+```{r boxplot expression of original results groups pc genes}
+deseq_res %>%
+  filter(gene_biotype == 'protein_coding', comparison == 'NCBP3', sig != 'not sig') %>%
+  ungroup %>%
+  mutate(exon_cnt_class = case_when(.$exon_cnt > 20 ~ 20, 
+                                    .$exon_cnt > 15 ~ 15,
+                                    TRUE ~ as.numeric(.$exon_cnt))) %>%
+  ggplot(., aes(x=sig, y=log10(baseMean_perkb+1), fill=sig)) +
+  geom_boxplot() +
+  facet_wrap(~comparison) +
+  scale_fill_manual(values = c('red', 'blue')) +
+  theme_bw() +
+  theme(panel.grid=element_blank())
+```
+
+is the difference in expression of protein-coding genes significant?
+```{r}
+deseq_res %>%
+  filter(gene_biotype == 'protein_coding', sig != 'not sig') %>%
+  group_by(comparison) %>%
+  do(tidy(wilcox.test(.$baseMean_perkb~.$sig)))
+```
+
+
+did expression-matching work? ie should have no differences significant after matching
+```{r}
+exprmatched_res_tbl %>%
+  filter(sig != 'not sig') %>%
+  group_by(comparison) %>%
+  do(tidy(wilcox.test(.$baseMean_perkb~.$sig)))
+```
+
+how many genes are matched up?
+```{r}
+exprmatched_res_tbl %>%
+  group_by(comparison, sig) %>%
+  summarize(cnt=n())
+```
+
+
+```{r expression matched counts cumfreqplot pc genes}
+exprmatched_res_tbl %>%
+  ungroup %>%
+  mutate(exon_cnt = ifelse(exon_cnt > 50, 50, exon_cnt)) %>%
+  group_by(comparison, sig, exon_cnt) %>%
+  summarize(cnt=n()) %>%
+  group_by(comparison, sig) %>%
+  mutate(cumsum_exoncnt = cumsum(cnt),
+         cumsum_freq = cumsum_exoncnt/max(cumsum_exoncnt)) %>%
+  ggplot(., aes(x=exon_cnt, y=cumsum_freq, color=sig)) +
+  geom_line() +
+  facet_grid(comparison~., scales='free') +
+  scale_color_manual(values = c('red', 'blue')) +
+  theme_bw() +
+  theme(panel.grid=element_blank())
+```
+
+
+wilcox test for the difference
+```{r}
+exprmatched_res_tbl %>%
+  group_by(comparison) %>%
+  do(tidy(wilcox.test(.$exon_cnt[.$sig == 'sig up'], .$exon_cnt[.$sig == 'sig dn'])))
+```
+Note that the exact p-value varies for each expression-matched depends on the random generator seed.
+
+
+# sessionInfo
+
+```{r}
+sessionInfo()
+```

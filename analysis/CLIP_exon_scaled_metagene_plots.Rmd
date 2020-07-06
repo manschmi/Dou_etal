@@ -1,0 +1,377 @@
+---
+title: 'metagene of exons Viphakone'
+author: "Manfred Schmid"
+output: 
+  pdf_document:
+    toc: true 
+    toc_depth: 3
+    fig_caption: true
+---
+
+`r format(Sys.time(), "%d %B, %Y; %R")`
+
+# Setup
+
+```{r setup, echo=TRUE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8, 
+                      fig.path=paste0('../Figures/CLIP_exons/'), 
+                      dev='pdf', 
+                      echo=TRUE, warning=FALSE, message=FALSE, 
+                      error=TRUE)
+```
+
+```{r load packages, echo=T, warning=F, message=F}
+suppressWarnings(library('tidyverse'))
+suppressWarnings(library('magrittr'))
+suppressWarnings(library('knitr'))
+suppressWarnings(library('RMetaTools'))
+```
+
+# load Annotation
+
+
+```{r}
+load('../../data/subRead_exon_annotations.RData', verbose=T)
+exon_anno_tbl
+```
+
+
+```{r}
+(exons_per_class <- table(distinct(exon_anno_tbl, GeneID, ExonID, class)$class))
+```
+
+
+# Load CLIP data
+
+
+## NCBP3 and EIF4A3 from CLIPdb
+
+Data for NCBP3 (c17orf85 and EIF4A3) are from CLIPdb study, mapped to hg38
+
+#### metagene values using deeptools
+```{bash, eval = FALSE}
+#!/bin/sh
+##cd /home/schmidm/faststorage/CLIP/CLIPdb/scripts
+##sbatch --account=thj_common --mem=4g deeptools_subReadanno_perexon.sh
+
+. /home/schmidm/miniconda2/etc/profile.d/conda.sh
+conda activate deeptools3
+
+#these annotations are shipped with subRead
+#anno="/home/schmidm/ms_tools/subread-2.0.0-Linux-x86_64/annotation/hg38_RefSeq_exon.txt"
+
+bed="/home/schmidm/ms_tools/subread-2.0.0-Linux-x86_64/annotation/hg38_RefSeq_individualexons.bed"
+
+#awk '{if($6 =="+"){print $0}}' $bed > ${bed/.bed/_plus.bed}
+#awk '{if($6 =="-"){print $0}}' $bed > ${bed/.bed/_minus.bed}
+
+plus_bw=$(ls /home/schmidm/faststorage/CLIP/CLIPdb/hg38_bw/*_plus_hg38.bw | awk '$1 ~ /C17orf85/ || $1 ~ /CSTF2/ || $1 ~ /EIF4A3/' | tr "\n" " ")
+
+minus_bw=${plus_bw//_plus_hg38.bw/_minus_hg38.bw}
+
+python ~/ms_tools/MS_Metagene_Tools/computeMatrixStranded.pyc scale-regions -Rp ${bed/.bed/_plus.bed} -Rm ${bed/.bed/_minus.bed} -Sp ${plus_bw} -Sm ${minus_bw} --metagene -o deeptools_subReadanno_individualexons_scaled.gz -b 100 -a 100 --binSize=50 --regionBodyLength=1000 --numberOfProcessors=1 --quiet
+
+python ~/ms_tools/MS_Metagene_Tools/computeMatrixOperationsMS.py -m deeptools_subReadanno_individualexons_scaled.gz -o deeptools_subReadanno_individualexons_scaled_nonempty.gz nanToValue=0 filterRegions
+```
+
+
+#### load to R
+```{r}
+fname <- '/Volumes/GenomeDK/faststorage/CLIP/CLIPdb/scripts/deeptools_subReadanno_individualexons_scaled_nonempty.gz'
+
+df <- RMetaTools::load_deeptoolsmatrix3(fname)
+```
+
+```{r}
+(df %<>% 
+   tidyr::separate(id, c('GeneID', 'ExonID'), sep=':') %>%
+    dplyr::mutate(sample_name = sub('.*\\/', '', sample_name) %>%
+                         sub('_plus_hg38.bw', '', .)) %>%
+  dplyr::select(GeneID, ExonID, sample_name, rel_pos, value))
+```
+
+select only protein-coding genes and positions with CLIP signal
+```{r}
+(df %<>% filter(value > 0) %>%
+  left_join(., exon_anno_tbl) %>%
+  filter(gene_type == 'protein_coding'))
+```
+
+
+#### save
+
+```{r}
+ncbp3 <- filter(df, sample_name == 'C17orf85_PARCLIP_PARalyzer')
+
+saveRDS(ncbp3, file='../data/NCBP3_CLIP_exon_metagene.rds')
+```
+
+```{r}
+eif4a3 <- filter(df, sample_name == 'EIF4A3_HITSCLIP_Piranha_001')
+
+saveRDS(eif4a3, file='../data/EIF4A3_CLIP_exon_metagene.rds')
+```
+
+
+
+## NCBP2 from Giacometti et al
+
+#### deeptools run
+```{bash, eval = FALSE}
+#!/bin/sh
+##cd /home/schmidm/faststorage/CLIP/Giacometti/scripts
+##sbatch --account=thj_common --mem=4g deeptools_subReadanno_perexon.sh
+
+. /home/schmidm/miniconda2/etc/profile.d/conda.sh
+conda activate deeptools3
+
+#these annotations are shipped with subRead
+#anno="/home/schmidm/ms_tools/subread-2.0.0-Linux-x86_64/annotation/hg38_RefSeq_exon.txt"
+
+bed="/home/schmidm/ms_tools/subread-2.0.0-Linux-x86_64/annotation/hg38_RefSeq_individualexons.bed"
+
+#awk '{if($6 =="+"){print $0}}' $bed > ${bed/.bed/_plus.bed}
+#awk '{if($6 =="-"){print $0}}' $bed > ${bed/.bed/_minus.bed}
+
+plus_bw=$(ls /home/schmidm/faststorage/CLIP/Giacometti/hg38_bw/*_plus_hg38.bw | awk '$1 ~ /C17orf85/ || $1 ~ /CSTF2/ || $1 ~ /EIF4A3/' | tr "\n" " ")
+
+minus_bw=${plus_bw//_plus_hg38.bw/_minus_hg38.bw}
+
+python ~/ms_tools/MS_Metagene_Tools/computeMatrixStranded.pyc scale-regions -Rp ${bed/.bed/_plus.bed} -Rm ${bed/.bed/_minus.bed} -Sp ${plus_bw} -Sm ${minus_bw} --metagene -o deeptools_subReadanno_individualexons_scaled.gz -b 100 -a 100 --binSize=50 --regionBodyLength=1000 --numberOfProcessors=1 --quiet
+
+python ~/ms_tools/MS_Metagene_Tools/computeMatrixOperationsMS.py -m deeptools_subReadanno_individualexons_scaled.gz -o deeptools_subReadanno_individualexons_scaled_nonempty.gz nanToValue=0 filterRegions
+```
+
+
+
+```{r}
+fname <- '/Volumes/GenomeDK/faststorage/CLIP/Giacometti_GSE94427/scripts/deeptools_subReadanno_individualexons_scaled_nonempty.gz'
+
+df <- RMetaTools::load_deeptoolsmatrix3(fname)
+```
+
+```{r}
+(cbp20 <- df %>% 
+   filter(grepl('CBP20', sample_name)) %>%
+   tidyr::separate(id, c('GeneID', 'ExonID'), sep=':') %>%
+    dplyr::mutate(sample_name = sub('.*GSM......._', '', sample_name) %>%
+                    sub('_norm_plus_hg38.bw', '', .)) %>%
+  dplyr::select(GeneID, ExonID, sample_name, rel_pos, value))
+```
+
+
+select only protein-coding genes and positions with CLIP signal
+```{r}
+(cbp20 %<>% filter(value > 0) %>%
+  left_join(., exon_anno_tbl) %>%
+  filter(gene_type == 'protein_coding'))
+```
+
+
+
+#### average replicates
+The datasets are replicates that behave nicely (not shown here), so we simply average over the 2 replicates.
+```{r}
+cbp20 %<>%
+  mutate(sample_name = sub('_.*', '', sample_name)) %>%
+  group_by(GeneID, ExonID, sample_name, rel_pos, exon_nr, width, class) %>%
+  summarize(value = sum(value)/2)
+```
+
+#### save cbp20 data
+
+```{r}
+saveRDS(cbp20, file='../data/CBP20_CLIP_exon_metagene.rds')
+```
+
+
+```{r}
+rm(df)
+```
+
+## ALY data from Viphakone et al
+
+## deeptools run
+```{bash, eval = FALSE}
+#!/bin/sh
+##cd /project/THJ_common/faststorage/people/MS/Yuhui/Viphakone_etal
+##sbatch --account=thj_common --mem=4g deeptools_subReadanno_perexon.sh
+
+. /home/schmidm/miniconda2/etc/profile.d/conda.sh
+conda activate deeptools3
+
+
+#these annotations are Viphakonepped with subRead
+#anno="/home/schmidm/ms_tools/subread-2.0.0-Linux-x86_64/annotation/hg38_RefSeq_exon.txt"
+
+bed="/home/schmidm/ms_tools/subread-2.0.0-Linux-x86_64/annotation/hg38_RefSeq_individualexons.bed"
+
+#awk '{if($6 =="+"){print $0}}' $bed > ${bed/.bed/_plus.bed}
+#awk '{if($6 =="-"){print $0}}' $bed > ${bed/.bed/_minus.bed}
+
+plus_bw=$(ls /home/schmidm/THJ_common/faststorage/data/Human/GEO/GSE113896/hg38/*plus*.bw | tr "\n" " ")
+minus_bw=${plus_bw//_hg38_plus.bw/_hg38_minus.bw}
+
+python ~/ms_tools/MS_Metagene_Tools/computeMatrixStranded.pyc scale-regions -Rp ${bed/.bed/_plus.bed} -Rm ${bed/.bed/_minus.bed} -Sp ${plus_bw} -Sm ${minus_bw} --metagene -o deeptools_subReadanno_individualexons_scaled.gz -b 100 -a 100 --binSize=50 --regionBodyLength=1000 --numberOfProcessors=1 --quiet
+
+python ~/ms_tools/MS_Metagene_Tools/computeMatrixOperationsMS.py -m deeptools_subReadanno_individualexons_scaled.gz -o deeptools_subReadanno_individualexons_scaled_nonempty.gz nanToValue=0 filterRegions
+```
+
+
+
+```{r}
+fname <- '/Volumes/GenomeDK/THJ_common/faststorage/people/MS/Yuhui/Viphakone_etal/deeptools_subReadanno_individualexons_scaled_nonempty.gz'
+
+df <- RMetaTools::load_deeptoolsmatrix3(fname)
+```
+
+```{r}
+(aly <- df %>% 
+   filter(grepl('Alyref', sample_name), value > 0) %>%
+   tidyr::separate(id, c('GeneID', 'ExonID'), sep=':') %>%
+   dplyr::mutate(sample_name = sub('.*GSE113896_', '', sample_name) %>%
+                         sub('-union_hg38', '', .)) %>%
+  dplyr::select(GeneID, ExonID, sample_name, rel_pos, value))
+```
+
+```{r}
+(aly %<>%
+  left_join(., exon_anno_tbl) %>%
+  filter(gene_type == 'protein_coding'))
+```
+
+#### save aly data
+
+
+```{r}
+saveRDS(aly, file='../data/ALY_CLIP_exon_metagene.rds')
+```
+
+```{r}
+rm(df)
+```
+
+
+#### alternative starting point
+
+```{r}
+ncbp3 <- readRDS('../data/NCBP3_CLIP_exon_metagene.rds')
+
+ncbp3$sample_name <- 'NCBP3'
+```
+
+```{r}
+eif4a3 <- readRDS('../data/EIF4A3_CLIP_exon_metagene.rds')
+
+eif4a3$sample_name <- 'EIF4A3'
+```
+
+```{r}
+cbp20 <- readRDS('../data/CBP20_CLIP_exon_metagene.rds')
+```
+
+```{r}
+aly <- readRDS('../data/ALY_CLIP_exon_metagene.rds')
+
+aly$sample_name <- 'ALYREF'
+```
+
+
+#### combine
+
+```{r}
+df <- bind_rows(ncbp3, eif4a3) %>% 
+  bind_rows(., cbp20) %>% 
+  bind_rows(., aly)
+```
+
+
+# Plots
+
+#### plot fun
+
+```{r}
+metaplot_all <- function(df) {
+  df %>% 
+    group_by(sample_name, rel_pos) %>%
+    summarize(events=n()) %>%
+    ggplot(., aes(x=rel_pos, y=events, color=sample_name)) +
+    geom_line() +
+    facet_wrap(~sample_name, scales='free') +
+    theme_bw() +
+    theme(panel.grid=element_blank())
+}
+```
+
+```{r}
+metaplot_perclass <- function(df, overlay=FALSE, exonsperclass = exons_per_class) {
+  
+  if(overlay){
+    p <- df %>% 
+    group_by(class, sample_name, rel_pos) %>%
+    summarize(events=n()) %>%
+    mutate(exons_per_class = exonsperclass[class],
+           events_per_exon = events/exons_per_class) %>%
+    ggplot(., aes(x=rel_pos, y=events_per_exon, color=class)) +
+    geom_line() +
+    facet_wrap(~sample_name, scales='free') +
+    theme_bw() +
+    theme(panel.grid=element_blank())
+  }else{
+    p <- df %>% 
+    group_by(class, sample_name, rel_pos) %>%
+    summarize(events=n()) %>%
+    mutate(exons_per_class = exons_per_class[class],
+           events_per_exon = events/exons_per_class) %>%
+    ggplot(., aes(x=rel_pos, y=events_per_exon, color=sample_name)) +
+    geom_line() +
+    facet_grid(class~sample_name) +
+    theme_bw() +
+    theme(panel.grid=element_blank())
+  }
+  
+  p
+}
+```
+
+
+#### per exon metagene plot
+```{r all exons}
+metaplot_all(df)
+```
+
+
+#### first vs internal vs last
+
+```{r first vs internal vs last}
+df %>% 
+  metaplot_perclass
+```
+
+
+#### mono vs multiexonic only exons g200nt
+
+```{r mono vs multiexonic only exons g200nt}
+df %>% 
+  filter(width > 200) %>%
+  metaplot_perclass
+```
+
+as overlay for paper:
+```{r mono vs multiexonic only exons g200nt overlayed}
+
+(exons_per_classg200 <- table(filter(exon_anno_tbl, width > 200) %>% 
+                                distinct(GeneID, ExonID, class) %$% 
+                                class))
+
+df %>% 
+  filter(width > 200) %>%
+  metaplot_perclass(., overlay = T, exons_per_classg200)
+```
+
+
+
+# sessionInfo
+```{r}
+sessionInfo()
+```
